@@ -29,12 +29,14 @@ def default_classifier(email):
     return classify_email_rules(email)
 
 
-def process_message(service, message_id: str, *, classifier=None, notifier=None) -> str:
-    """Process one message and return its final status."""
+def process_message(service, message_id: str, *, classifier=None, notifier=None, force: bool = False) -> str:
+    """Process one message and return its final status.
+
+    force=True skips the duplicate check (used to re-send recent alerts for a sample check)."""
     classifier = classifier or default_classifier
     notifier = notifier or send_alert
     details = get_settings().store_email_details
-    if not deduplication.claim(message_id):
+    if not force and not deduplication.claim(message_id):
         return "duplicate"
 
     try:

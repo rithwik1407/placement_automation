@@ -9,6 +9,10 @@ on:
         description: "Only send a test message"
         type: boolean
         default: false
+      resend_days:
+        description: "Re-send alerts for placement emails from the last N days (0 = normal run)"
+        type: number
+        default: 0
 
 concurrency:
   group: placement-poll
@@ -56,7 +60,7 @@ jobs:
 
       - name: Check Gmail and send alerts
         if: ${{ !inputs.test }}
-        run: mkdir -p state && python scripts/poll_once.py
+        run: mkdir -p state && python scripts/poll_once.py --resend-days ${{ inputs.resend_days || 0 }}
 
       - name: Save state
         if: ${{ always() && !inputs.test }}

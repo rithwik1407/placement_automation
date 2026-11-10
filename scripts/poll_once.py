@@ -21,7 +21,7 @@ from app.gmail.email_reader import fetch_metadata  # noqa: E402
 from app.gmail.oauth import gmail_service  # noqa: E402
 from app.gmail.watcher import recent_message_ids  # noqa: E402
 from app.services import deduplication  # noqa: E402
-from app.services.pipeline import process_many, summarize  # noqa: E402
+from app.services.pipeline import process_many, process_message, summarize  # noqa: E402
 from app.services.sender_verification import get_allowlist  # noqa: E402
 
 logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
@@ -40,6 +40,8 @@ def build_query() -> str:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--test", action="store_true", help="send a test message and exit")
+    parser.add_argument("--resend-days", type=int, default=0,
+                        help="re-send alerts for placement emails from the last N days, even if already seen")
     args = parser.parse_args()
 
     if args.test:
@@ -53,6 +55,14 @@ def main() -> None:
 
     init_db()
     service = gmail_service()
+
+    if args.resend_days:
+        query = build_query().replace("newer_than:3d", f"newer_than:{args.resend_days}d")
+        old_ids = list(reversed(recent_message_ids(service, query=query)))  # oldest first
+        results = {mid: process_message(service, mid, force=True) for mid in old_ids}
+        print(f"resend: checked {len(old_ids)} email(s); {summarize(results)}")
+        return
+
     ids = recent_message_ids(service, query=build_query())
 
     if get_state("initialized") is None:
