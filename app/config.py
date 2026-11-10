@@ -37,6 +37,10 @@ class Settings(BaseSettings):
     # --- Sender allowlist ---
     placement_senders_file: str = str(ROOT_DIR / "config" / "placement_senders.json")
 
+    # --- Classifier ---
+    # "rules" = free keyword classifier (no API key). "claude" = Claude API (paid, more accurate).
+    classifier: str = "rules"
+
     # --- Claude ---
     anthropic_api_key: str | None = None  # the SDK also reads ANTHROPIC_API_KEY itself
     claude_model: str = "claude-opus-5-5"
@@ -44,6 +48,22 @@ class Settings(BaseSettings):
     # Email bodies above this many characters are cut before classification (placement mails are
     # normally far shorter; this only guards against huge HTML newsletters slipping through).
     max_email_chars: int = 40_000
+
+    # --- Where alerts go ---
+    # "callmebot" = free WhatsApp via CallMeBot (personal use)
+    # "telegram"  = free Telegram bot
+    # "whatsapp_cloud" = Meta WhatsApp Cloud API (official; Meta charges per template message)
+    notify_channel: str = "callmebot"
+
+    callmebot_phone: str = ""  # your WhatsApp number with country code, e.g. 919xxxxxxxxx
+    callmebot_apikey: str = ""
+
+    telegram_bot_token: str = ""
+    telegram_chat_id: str = ""
+
+    # Store subjects and extracted details in the database (audit trail). Turn off when the
+    # database lives somewhere less private, e.g. a GitHub Actions cache on a public repo.
+    store_email_details: bool = True
 
     # --- WhatsApp Cloud API ---
     whatsapp_token: str = ""

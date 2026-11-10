@@ -1,6 +1,11 @@
-"""Send placement alerts through the WhatsApp Cloud API.
+"""Send placement alerts.
 
-Two modes:
+Channels (NOTIFY_CHANNEL):
+- "callmebot": free WhatsApp messages to your own number via CallMeBot (personal use).
+- "telegram": free Telegram bot message.
+- "whatsapp_cloud": Meta WhatsApp Cloud API (official, paid per template message).
+
+WhatsApp Cloud API has two modes:
 - "template" (default): sends the approved `placement_alert` template. Works at any time.
 - "text": sends a free-form message. Only delivered inside the 24-hour customer-service
   window (after you have messaged the business number), so use it for testing only.
@@ -65,6 +70,9 @@ def render_text(c: Classification, email: EmailMessage) -> str:
         f"Registration deadline: {f[4]}",
         f"Date / time: {f[5]}",
         f"Next action: {f[6]}",
+        f"Venue / link: {_clean_param(c.venue_or_link)}",
+        "",
+        f"Summary: {_clean_param(c.summary)}",
         "",
         f"Subject: {f[7]}",
         f"Original email (placement cell): {f[8]}",
@@ -93,12 +101,60 @@ def _payload(c: Classification, email: EmailMessage) -> dict:
     }
 
 
+def _request_with_retries(do_request) -> httpx.Response:
+    last_error = ""
+    for attempt in range(4):
+        try:
+            r = do_request()
+        except httpx.TransportError as e:
+            last_error = f"network error: {type(e).__name__}"
+        else:
+            if r.status_code < 300:
+                return r
+            last_error = f"HTTP {r.status_code}: {r.text[:300]}"
+            if r.status_code < 500 and r.status_code != 429:
+                break  # bad request / auth error: retrying will not help
+        time.sleep(2**attempt)
+    raise WhatsAppError(last_error)
+
+
+def send_text(text: str) -> str:
+    """Send a plain text message on the configured free channel (also used for test messages)."""
+    s = get_settings()
+    with httpx.Client(timeout=30) as client:
+        if s.notify_channel == "callmebot":
+            if not (s.callmebot_phone and s.callmebot_apikey):
+                raise WhatsAppError("CallMeBot is not configured (CALLMEBOT_PHONE, CALLMEBOT_APIKEY)")
+            r = _request_with_retries(
+                lambda: client.get(
+                    "https://api.callmebot.com/whatsapp.php",
+                    params={"phone": s.callmebot_phone, "text": text, "apikey": s.callmebot_apikey},
+                )
+            )
+            if "error" in r.text.lower()[:300] and "queued" not in r.text.lower():
+                raise WhatsAppError(f"CallMeBot rejected the message: {r.text[:200]}")
+            return "callmebot"
+        if s.notify_channel == "telegram":
+            if not (s.telegram_bot_token and s.telegram_chat_id):
+                raise WhatsAppError("Telegram is not configured (TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID)")
+            r = _request_with_retries(
+                lambda: client.post(
+                    f"https://api.telegram.org/bot{s.telegram_bot_token}/sendMessage",
+                    json={"chat_id": s.telegram_chat_id, "text": text.replace("*", ""), "disable_web_page_preview": True},
+                )
+            )
+            return str(r.json()["result"]["message_id"])
+    raise WhatsAppError(f"send_text does not support channel {s.notify_channel!r}")
+
+
 def send_alert(c: Classification, email: EmailMessage, client: httpx.Client | None = None) -> str:
-    """Send the alert and return the WhatsApp message ID. Retries temporary failures."""
+    """Send the alert and return a message ID. Retries temporary failures."""
     s = get_settings()
     if s.dry_run:
-        log.info("[DRY RUN] WhatsApp alert:\n%s", render_text(c, email))
+        log.info("[DRY RUN] alert:\n%s", render_text(c, email))
         return "dry-run"
+    if s.notify_channel in ("callmebot", "telegram"):
+        return send_text(render_text(c, email))
     if not (s.whatsapp_token and s.whatsapp_phone_number_id and s.whatsapp_recipient):
         raise WhatsAppError("WhatsApp is not configured (token, phone number ID, recipient)")
 
@@ -108,20 +164,8 @@ def send_alert(c: Classification, email: EmailMessage, client: httpx.Client | No
     own_client = client is None
     client = client or httpx.Client(timeout=20)
     try:
-        last_error = ""
-        for attempt in range(4):
-            try:
-                r = client.post(url, json=payload, headers=headers)
-            except httpx.TransportError as e:
-                last_error = f"network error: {e}"
-            else:
-                if r.status_code < 300:
-                    return r.json()["messages"][0]["id"]
-                last_error = f"HTTP {r.status_code}: {r.text[:500]}"
-                if r.status_code < 500 and r.status_code != 429:
-                    break  # bad request / auth error: retrying will not help
-            time.sleep(2**attempt)
-        raise WhatsAppError(last_error)
+        r = _request_with_retries(lambda: client.post(url, json=payload, headers=headers))
+        return r.json()["messages"][0]["id"]
     finally:
         if own_client:
             client.close()

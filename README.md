@@ -24,6 +24,49 @@ WhatsApp Cloud API template message ──► your phone
 Cloud Scheduler calls two more endpoints: `/tasks/renew-watch` daily (Gmail watches expire after
 7 days) and `/tasks/sync` every 15 minutes (catches missed pushes and retries failed alerts).
 
+## Free setup (recommended): GitHub Actions + CallMeBot, no paid services
+
+| Piece | Free option used | Paid option (optional) |
+|---|---|---|
+| Runs the agent | GitHub Actions every 5 min (`.github/workflows/poll.yml`), free on public repos | Cloud Run + Pub/Sub push (instant) |
+| Classifier | Keyword rules (`CLASSIFIER=rules`) | Claude API (`CLASSIFIER=claude`) |
+| WhatsApp | CallMeBot free personal WhatsApp API (`NOTIFY_CHANNEL=callmebot`) | Meta WhatsApp Cloud API |
+| Backup channel | Telegram bot (`NOTIFY_CHANNEL=telegram`) | |
+| Database | SQLite file kept in the Actions cache (message IDs and statuses only) | PostgreSQL |
+| Gmail | Gmail API, read-only (free; Google Cloud project without billing) | |
+
+Trade-offs: alerts arrive within about 5 to 15 minutes instead of instantly (GitHub delays scheduled
+runs), and the keyword classifier fills only fields the email labels clearly ("Company:", "Last date:");
+everything else says "Not mentioned in email", and every alert includes a short excerpt of the email.
+
+Steps:
+
+1. **CallMeBot API key.** On callmebot.com, open the WhatsApp API page: save the
+   bot's number in your contacts, send it `I allow callmebot to send me messages` on WhatsApp, and it
+   replies with your API key. (If the page says the bot is full, use Telegram instead: create a bot with
+   @BotFather, send it any message, and get your chat ID from
+   `https://api.telegram.org/bot<TOKEN>/getUpdates`.)
+2. **Gmail token.** Create a Google Cloud project (no billing needed), enable the Gmail API, set up the
+   OAuth consent screen (External, publish it "In production"), create a **Desktop app** OAuth client,
+   save it as `secrets/client_secret.json`, then on your computer run
+   `pip install -r requirements.txt && python scripts/authorize_gmail.py` and sign in with the Gmail
+   account to monitor. Copy the whole content of `secrets/gmail_token.json`.
+3. **GitHub secrets.** In the repo: Settings → Secrets and variables → Actions → New repository secret:
+   `GMAIL_TOKEN_JSON`, `CALLMEBOT_PHONE` (e.g. `919xxxxxxxxx`), `CALLMEBOT_APIKEY`
+   (or `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` plus a repository *variable* `NOTIFY_CHANNEL=telegram`).
+   Secrets are never shown in logs, even on a public repo.
+4. **Test.** Actions → Placement alerts → Run workflow → tick "Only send a test message". You should get
+   a WhatsApp (or Telegram) message within a minute.
+5. **Turn it on.** Add a repository *variable* `ALERTS_ENABLED` = `true` (same settings page, Variables
+   tab). Until then the 5-minute schedule does nothing, so it doesn't fail before setup is finished.
+   From then on it runs every 5 minutes. On its first run it marks placement emails older
+   than 90 minutes as already seen, so you are not flooded with old alerts.
+
+Logs on a public repo are public, so the polling script prints only counts, never subjects or senders.
+
+The rest of this README covers the original paid, instant setup (Cloud Run, Pub/Sub, Claude, Meta
+WhatsApp Cloud API). You don't need it for the free setup.
+
 ## What gets alerted
 
 | Category | Priority shown |

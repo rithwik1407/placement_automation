@@ -8,7 +8,7 @@ Nothing here replies to emails, submits forms or applies to jobs.
 import json
 import logging
 
-from app.classifier.claude_service import classify_email
+from app.config import get_settings
 from app.gmail.email_reader import fetch_message, fetch_metadata, parse_message
 from app.services import deduplication
 from app.services.sender_verification import verify_sender
@@ -19,8 +19,21 @@ log = logging.getLogger(__name__)
 MIN_CONFIDENCE = 0.5
 
 
-def process_message(service, message_id: str, *, classifier=classify_email, notifier=send_alert) -> str:
+def default_classifier(email):
+    if get_settings().classifier == "claude":
+        from app.classifier.claude_service import classify_email
+
+        return classify_email(email)
+    from app.classifier.rules import classify_email_rules
+
+    return classify_email_rules(email)
+
+
+def process_message(service, message_id: str, *, classifier=None, notifier=None) -> str:
     """Process one message and return its final status."""
+    classifier = classifier or default_classifier
+    notifier = notifier or send_alert
+    details = get_settings().store_email_details
     if not deduplication.claim(message_id):
         return "duplicate"
 
@@ -36,10 +49,10 @@ def process_message(service, message_id: str, *, classifier=classify_email, noti
         result = classifier(email)
         common = dict(
             sender=verdict.address,
-            subject=email.subject,
+            subject=email.subject if details else None,
             category=result.category,
             confidence=result.confidence,
-            classification_json=result.model_dump_json(),
+            classification_json=result.model_dump_json() if details else None,
         )
         if not result.is_placement_related or result.category == "NOT_PLACEMENT":
             deduplication.finish(message_id, "not_placement", **common)
@@ -53,7 +66,7 @@ def process_message(service, message_id: str, *, classifier=classify_email, noti
         log.info("Alert sent for %s (%s)", message_id, result.category)
         return "alerted"
     except Exception as e:  # recorded, never silent; retried by the sync job
-        log.exception("Failed to process %s", message_id)
+        log.error("Failed to process %s: %s", message_id, type(e).__name__)
         deduplication.finish(message_id, "failed", error=f"{type(e).__name__}: {e}"[:2000])
         return "failed"
 

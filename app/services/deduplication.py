@@ -10,7 +10,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.database.models import ProcessedEmail, SessionLocal
 
-FINAL_STATUSES = {"alerted", "skipped_sender", "not_placement"}
+FINAL_STATUSES = {"alerted", "skipped_sender", "not_placement", "baseline"}
 MAX_ATTEMPTS = 5
 
 
