@@ -1,8 +1,10 @@
 {
-  "_comment": "Only emails from these senders are ever classified or alerted on. PLACEHOLDERS: replace with your college placement cell's real address(es) and/or domain before deploying.",
+  "_comment": "Only emails from these exact sender addresses are classified or alerted on. Display names are ignored.",
   "addresses": [
-    "placement-cell@college-domain.edu",
-    "tpo@college-domain.edu"
+    "kabita_tnp@vnrvjiet.in",
+    "poonam_tnp@vnrvjiet.in",
+    "training@vnrvjiet.in",
+    "notifications@pod.ai"
   ],
   "domains": [],
   "require_authentication": true
