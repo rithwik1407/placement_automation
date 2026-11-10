@@ -1,0 +1,9 @@
+{
+  "_comment": "Only emails from these senders are ever classified or alerted on. PLACEHOLDERS: replace with your college placement cell's real address(es) and/or domain before deploying.",
+  "addresses": [
+    "placement-cell@college-domain.edu",
+    "tpo@college-domain.edu"
+  ],
+  "domains": [],
+  "require_authentication": true
+}
