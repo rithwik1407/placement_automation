@@ -58,25 +58,23 @@ def alert_fields(c: Classification, email: EmailMessage) -> list[str]:
 
 
 def render_text(c: Classification, email: EmailMessage) -> str:
-    """Human-readable alert, used for text mode and dry-run logs."""
-    f = alert_fields(c, email)
-    lines = [
-        "*College Placement Alert*",
-        "",
-        f"*{f[0]}*",
-        f"Company: {f[1]}",
-        f"Role: {f[2]}",
-        f"Eligibility: {f[3]}",
-        f"Registration deadline: {f[4]}",
-        f"Date / time: {f[5]}",
-        f"Next action: {f[6]}",
-        f"Venue / link: {_clean_param(c.venue_or_link)}",
-        "",
-        f"Summary: {_clean_param(c.summary)}",
-        "",
-        f"Subject: {f[7]}",
-        f"Original email (placement cell): {f[8]}",
-    ]
+    """Human-readable alert. Fields the email doesn't mention are left out."""
+    from app.classifier.claude_service import NOT_MENTIONED
+
+    def line(label: str, value: str) -> list[str]:
+        value = _clean_param(value)
+        return [] if not value or value == "-" or value == NOT_MENTIONED else [f"{label}: {value}"]
+
+    lines = ["*College Placement Alert*", "", f"*{_clean_param(f'{c.priority} · {c.category_label.upper()}')}*"]
+    lines += line("Company", c.company)
+    lines += line("Role", c.role)
+    lines += line("Eligibility", c.eligibility)
+    lines += line("Registration deadline", c.registration_deadline)
+    lines += line("Date / time", c.event_date_time)
+    lines += line("Venue / link", c.venue_or_link)
+    lines += line("Next action", c.action_required)
+    lines += [""] + line("Summary", c.summary)
+    lines += ["", f"Subject: {_clean_param(email.subject)}", f"Original email: {_clean_param(email.link)}"]
     return "\n".join(lines)
 
 

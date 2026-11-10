@@ -52,3 +52,32 @@ def test_non_placement_ignored():
     ]:
         c = classify_email_rules(mail(subject, body))
         assert not c.is_placement_related, subject
+
+
+def test_company_guessed_from_subject_and_body():
+    cases = [
+        ("Campus Drive: Example Technologies - SDE (2027 batch)", "", "Example Technologies"),
+        ("Infosys Recruitment Drive 2027 Batch", "", "Infosys"),
+        ("TCS Hiring - Ninja and Digital roles", "", "TCS"),
+        ("Fwd: Registration for Deloitte USI - Analyst", "", "Deloitte USI"),
+        ("Shortlisted students - Zoho Corporation", "", "Zoho Corporation"),
+        ("Important: Placement update", "Dear Students,\nAccenture is visiting our campus on 20 Nov.", "Accenture"),
+        ("Pool campus drive for 2027 batch", "Recruitment drive by Cognizant Technology Solutions for B.Tech students.",
+         "Cognizant Technology Solutions"),
+    ]
+    for subject, body, expected in cases:
+        c = classify_email_rules(mail(subject, body or "Recruitment drive details inside."))
+        assert c.company == expected, (subject, c.company)
+
+
+def test_company_not_invented():
+    c = classify_email_rules(mail("Placement drive for 2027 batch", "Recruitment drive for B.Tech students. Register soon."))
+    assert c.company == NOT_MENTIONED
+
+
+def test_alert_omits_missing_fields():
+    from app.whatsapp.notifier import render_text
+
+    c = classify_email_rules(mail("Hiring for interns", "A company is hiring interns. Details will follow."))
+    text = render_text(c, mail("Hiring for interns", ""))
+    assert "Not mentioned" not in text and "Company:" not in text and "Summary:" in text

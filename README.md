@@ -67,6 +67,23 @@ Logs on a public repo are public, so the polling script prints only counts, neve
 The rest of this README covers the original paid, instant setup (Cloud Run, Pub/Sub, Claude, Meta
 WhatsApp Cloud API). You don't need it for the free setup.
 
+## Near-instant alerts (free): Google Apps Script
+
+GitHub Actions can only check every 5 minutes (often later). For alerts within about a minute,
+run the same rules inside your Google account with Apps Script: [`apps_script/Code.gs`](apps_script/Code.gs).
+
+1. Open https://script.google.com while signed in to the Gmail account to monitor → **New project**.
+2. Replace the contents of `Code.gs` with `apps_script/Code.gs` from this repo → Save.
+3. **Project Settings** (gear) → **Script properties** → add `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`.
+4. In the editor, pick the function **`setup`** → **Run** → allow the permissions (Google shows an
+   "unverified app" screen for your own script: Advanced → Go to project).
+   You get a Telegram test message, and from then on Gmail is checked every minute.
+5. Optional: run **`resendRecent`** to re-send alerts for the last 3 days.
+6. Turn off the GitHub schedule so you don't get each alert twice: set the repository variable
+   `ALERTS_ENABLED` to `false`.
+
+Truly instant (push) delivery needs the paid Cloud Run + Pub/Sub setup described below.
+
 ## What gets alerted
 
 | Category | Priority shown |

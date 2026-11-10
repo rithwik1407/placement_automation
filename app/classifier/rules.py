@@ -26,7 +26,7 @@ CATEGORY_PATTERNS: list[tuple[str, list[str]]] = [
     ("PLACEMENT_DRIVE", [r"\b(campus|placement|recruitment|hiring|off[\s-]?campus|pool[\s-]?campus) drive\b",
                          r"\bcampus (recruitment|placement|hiring)\b", r"\brecruitment\b", r"\bhiring\b",
                          r"\bjob (opening|opportunity|role)\b", r"\binternship (opportunity|drive|offer)\b",
-                         r"\bctc\b", r"\bstipend\b", r"\bpackage\b.*\blpa\b", r"\blpa\b", r"\bjob description\b"]),
+                         r"\bctc\b", r"\bvisiting (our )?campus\b", r"\bplacement (update|notice|opportunity|process)\b", r"\bstipend\b", r"\bpackage\b.*\blpa\b", r"\blpa\b", r"\bjob description\b"]),
     ("REGISTRATION", [r"\bregistrations?\b", r"\bregister\b", r"\bapply (now|before|by)\b", r"\blast date\b",
                       r"\bdeadline\b", r"\bgoogle form\b", r"forms\.gle/"]),
     ("ELIGIBILITY", [r"\beligib(le|ility)\b", r"\bcgpa\b", r"\bbacklogs?\b"]),
@@ -65,6 +65,60 @@ def _labelled(text: str, label: str) -> str | None:
     return None
 
 
+# --- Company name guessing (used when the email has no "Company:" line) ---
+
+STOPWORDS = {
+    "a", "an", "the", "all", "dear", "students", "student", "candidates", "batch", "year", "final", "pre",
+    "b.tech", "btech", "b.e", "m.tech", "mtech", "mca", "mba", "cse", "ece", "eee", "it", "mech", "civil",
+    "campus", "placement", "placements", "registration", "registrations", "drive", "drives", "hiring",
+    "recruitment", "internship", "internships", "interview", "interviews", "test", "online", "off", "pool",
+    "training", "tnp", "t&p", "tpo", "vnr", "vjiet", "vnrvjiet", "ppt", "shortlist", "shortlisted",
+    "result", "results", "selected", "important", "urgent", "reminder", "re", "fwd", "fw", "last", "date",
+    "deadline", "job", "jobs", "opportunity", "opportunities", "role", "roles", "update", "updates",
+    "notice", "info", "information", "details", "regarding", "reg", "new", "upcoming", "virtual", "on",
+    "for", "of", "and", "&", "by", "with", "at", "from", "is", "are", "dt", "assessment", "talk",
+    "college", "institute", "university", "program", "programme", "hackathon", "webinar", "session",
+}
+NAME_START_RE = re.compile(r"^([A-Z][\w&.'’-]*(?:[ \t]+(?:[A-Z0-9][\w&.'’-]*|&|of|and)){0,5})")
+NAME_END_RE = re.compile(r"([A-Z][\w&.'’-]*(?:[ \t]+(?:[A-Z0-9][\w&.'’-]*|&|of|and)){0,5})[ \t]*$")
+KW = (r"(campus|recruitment|hiring|drive|placement|off[- ]?campus|pool[- ]?campus|internship|registration"
+      r"|ppt|pre[- ]?placement|shortlist(ed)?|interviews?|online test|assessment|results?|job)")
+KW_THEN_NAME = re.compile(KW + r"[ \t]*(students|candidates|list|schedule|link|process|drive|talk)?[ \t]*"
+                          r"(by|for|of|from|with|at|[-–:|])[ \t]*", re.I)
+NAME_THEN_KW = re.compile(r"[ \t]*([-–:|][ \t]*)?" + KW, re.I)
+NAME_THEN_VERB = re.compile(r"[ \t]+(is|are|will be)[ \t]+(visiting|hiring|recruiting|conducting|coming|organi[sz]ing|looking|inviting)", re.I)
+
+
+def _clean_company(raw: str | None) -> str | None:
+    if not raw:
+        return None
+    words = raw.split()
+    while words and words[0].lower().strip(".,:") in STOPWORDS:
+        words.pop(0)
+    while words and (words[-1].lower().strip(".,:") in STOPWORDS or re.fullmatch(r"\d{4}", words[-1])):
+        words.pop()
+    name = " ".join(words).strip(" .,:-–|")
+    if len(name) < 2 or re.search(r"vnr|vjiet|vignana", name, re.I):
+        return None
+    return name
+
+
+def _guess_company(subject: str, body: str) -> str | None:
+    subject = re.sub(r"^\s*((re|fwd?|fw)\s*:\s*)+", "", subject or "", flags=re.I)
+    for text in (subject, body[:2000]):
+        for line in text.splitlines():
+            for pattern in (NAME_THEN_VERB, NAME_THEN_KW):
+                for m in pattern.finditer(line):
+                    name = _clean_company((NAME_END_RE.search(line[: m.start()]) or [None, None])[1])
+                    if name:
+                        return name
+            for m in KW_THEN_NAME.finditer(line):
+                name = _clean_company((NAME_START_RE.match(line[m.end():]) or [None, None])[1])
+                if name:
+                    return name
+    return None
+
+
 def _deadline_sentence(text: str) -> str | None:
     for sentence in re.split(r"(?<=[.!?])\s+|\n", text):
         s = sentence.strip()
@@ -87,7 +141,11 @@ def classify_email_rules(email: EmailMessage) -> Classification:
     text = f"{email.subject}\n{email.body}"
     lower = text.lower()
 
-    category = "NOT_PLACEMENT"
+    # The subject decides the category when it can (a drive email that mentions its online test
+    # is still a drive); otherwise the whole email is used.
+    subject_lower = email.subject.lower()
+    category = next((cat for cat, pats in CATEGORY_PATTERNS if any(re.search(p, subject_lower) for p in pats)),
+                    "NOT_PLACEMENT")
     hits = 0
     for cat, patterns in CATEGORY_PATTERNS:
         n = sum(1 for p in patterns if re.search(p, lower))
@@ -102,6 +160,8 @@ def classify_email_rules(email: EmailMessage) -> Classification:
     is_placement = category != "NOT_PLACEMENT"
 
     fields = {k: _labelled(email.body, v) for k, v in LABELS.items()}
+    if not fields["company"] and is_placement:
+        fields["company"] = _guess_company(email.subject, email.body)
     if not fields["registration_deadline"]:
         fields["registration_deadline"] = _deadline_sentence(email.body)
     if not fields["venue_or_link"]:
