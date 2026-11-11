@@ -117,10 +117,19 @@ function processMessage_(m) {
       !isAuthenticated_(address.split('@')[1], [m.getHeader('Authentication-Results') || ''])) {
     return 'skipped_sender';
   }
-  var email = { id: m.getId(), subject: m.getSubject() || '', body: m.getPlainBody() || '' };
-  var c = classifyEmail(email.subject, email.body);
+  var subject = m.getSubject() || '';
+  var body = cleanForwardBody_(m.getPlainBody() || '');
+  var c = classifyEmail(subject, body);
   if (!c.is_placement_related) return 'not_placement';
-  sendTelegram_(renderText(c, email.subject, 'https://mail.google.com/mail/u/0/#all/' + email.id));
+  sendTelegramRaw_(renderText(c, subject, body, address));
+  // Attachments (shortlists, JDs, schedules) follow the alert as files.
+  m.getAttachments({ includeInlineImages: false }).forEach(function (a) {
+    if (a.getSize() > 50 * 1024 * 1024) {
+      sendTelegramRaw_('File too large for Telegram (over 50 MB): ' + a.getName() + '. Open it in Gmail.');
+    } else {
+      sendTelegramDocument_(a.copyBlob().setName(a.getName() || 'attachment'), '');
+    }
+  });
   return 'alerted';
 }
 
@@ -432,22 +441,31 @@ function clean_(v) {
   return v.length > 300 ? v.slice(0, 299) + '…' : v;
 }
 
-function renderText(c, subject, link) {
-  var lines = ['College Placement Alert', '', c.priority + ' · ' + c.category_label.toUpperCase()];
-  var add = function (label, value) {
-    value = clean_(value);
-    if (value && value !== NOT_MENTIONED) lines.push(label + ': ' + value);
-  };
-  add('Company', c.company);
-  add('Role', c.role);
-  add('Eligibility', c.eligibility);
-  add('Registration deadline', c.registration_deadline);
-  add('Date / time', c.event_date_time);
-  add('Venue / link', c.venue_or_link);
-  add('Next action', c.action_required);
-  lines.push('');
-  add('Summary', c.summary);
-  lines.push('', 'Subject: ' + clean_(subject), 'Original email: ' + link);
+// Simple alert: sender, company, links, subject, and a summary of the body (without the subject
+// line, greetings, sign-offs or links). Fields that aren't in the email are left out.
+function renderText(c, subject, body, sender) {
+  var links = [];
+  (body.match(/https?:\/\/[^\s<>")\]]+/g) || []).forEach(function (u) {
+    u = u.replace(/[.,;:]+$/, '');
+    if (links.indexOf(u) < 0 && links.length < 3) links.push(u);
+  });
+  var subj = clean_(subject);
+  var raw = body.replace(/https?:\/\/[^\s<>")\]]+/g, '').split('\n').map(function (l) { return l.trim(); });
+  // Stop at the sign-off block ("Regards," / "Thanks," ...).
+  for (var i = 0; i < raw.length; i++) {
+    if (/^(regards|thanks|thank you|best regards|warm regards|with regards|sincerely)\b[ ,.!]*$/i.test(raw[i])) { raw = raw.slice(0, i); break; }
+  }
+  var text = raw.filter(function (l) {
+    return l.length > 1 && l.toLowerCase() !== subj.toLowerCase() &&
+      !/^(dear|hello|hi|greetings)\b[^.]*[,!]?$/i.test(l);
+  }).join(' ').replace(/\s+/g, ' ').replace(/\s+([.,])/g, '$1').trim();
+  if (text.length > 600) text = text.slice(0, 600).replace(/\s+\S*$/, '') + '…';
+
+  var lines = ['🎓 College Placement Alert', '', 'From: ' + sender];
+  if (c.company && c.company !== NOT_MENTIONED) lines.push('Company: ' + clean_(c.company));
+  if (links.length) lines.push('Link: ' + links.join('\n'));
+  if (subj) lines.push('Subject: ' + subj);
+  if (text) lines.push('', 'Summary: ' + text);
   return lines.join('\n');
 }
 
