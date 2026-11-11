@@ -82,6 +82,10 @@ run the same rules inside your Google account with Apps Script: [`apps_script/Co
 6. Turn off the GitHub schedule so you don't get each alert twice: set the repository variable
    `ALERTS_ENABLED` to `false`.
 
+**Forward as-is senders:** emails from addresses in `FORWARD_AS_IS` (top of `Code.gs`) skip the
+placement filter and are sent to Telegram in full: the text, then every attachment (PDFs, images, etc.)
+as files.
+
 Truly instant (push) delivery needs the paid Cloud Run + Pub/Sub setup described below.
 
 ## What gets alerted

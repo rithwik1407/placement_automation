@@ -27,6 +27,11 @@ var SENDERS = [
 // Senders listed here skip that check (e.g. platforms that send through another mail service).
 var REQUIRE_AUTHENTICATION = false; // some placement-cell mails fail DKIM/DMARC, so this is off
 var SKIP_AUTH_FOR = [];
+// Emails from these senders are forwarded to Telegram exactly as they are (full text plus every
+// attachment such as PDFs and images), with no placement filtering.
+var FORWARD_AS_IS = [
+  'vedeshridhvi@gmail.com',
+];
 var LOOKBACK_MINUTES = 120; // each run looks at mail from the last 2 hours
 var NOT_MENTIONED = 'Not mentioned in email';
 
@@ -88,12 +93,13 @@ function sendTestMessage() {
 
 function recentMessages_(minutes) {
   var after = Math.floor((Date.now() - minutes * 60 * 1000) / 1000);
-  var query = 'from:(' + SENDERS.join(' OR ') + ') after:' + after;
+  var query = 'from:(' + SENDERS.concat(FORWARD_AS_IS).join(' OR ') + ') after:' + after;
   var cutoff = new Date(after * 1000);
   var out = [];
   GmailApp.search(query, 0, 50).forEach(function (thread) {
     thread.getMessages().forEach(function (m) {
-      if (m.getDate() >= cutoff && isAllowlisted_(extractAddress_(m.getFrom()))) out.push(m);
+      var addr = extractAddress_(m.getFrom());
+      if (m.getDate() >= cutoff && (isAllowlisted_(addr) || isForwardAsIs_(addr))) out.push(m);
     });
   });
   out.sort(function (a, b) { return b.getDate() - a.getDate(); });
@@ -102,6 +108,10 @@ function recentMessages_(minutes) {
 
 function processMessage_(m) {
   var address = extractAddress_(m.getFrom());
+  if (isForwardAsIs_(address)) {
+    forwardAsIs_(m);
+    return 'forwarded';
+  }
   if (!isAllowlisted_(address)) return 'skipped_sender';
   if (REQUIRE_AUTHENTICATION && SKIP_AUTH_FOR.indexOf(address) < 0 &&
       !isAuthenticated_(address.split('@')[1], [m.getHeader('Authentication-Results') || ''])) {
@@ -112,6 +122,29 @@ function processMessage_(m) {
   if (!c.is_placement_related) return 'not_placement';
   sendTelegram_(renderText(c, email.subject, 'https://mail.google.com/mail/u/0/#all/' + email.id));
   return 'alerted';
+}
+
+// Sends the whole email to Telegram: header, full text (split into 4,000-character parts,
+// Telegram's limit), then each attachment as a file. Telegram bots can send files up to 50 MB.
+function forwardAsIs_(m) {
+  var header = 'Email from ' + m.getFrom() + '\n' +
+    'Subject: ' + (m.getSubject() || '(no subject)') + '\n' +
+    'Date: ' + Utilities.formatDate(m.getDate(), Session.getScriptTimeZone(), 'd MMM yyyy, h:mm a') + '\n' +
+    'Open in Gmail: https://mail.google.com/mail/u/0/#all/' + m.getId();
+  var body = (m.getPlainBody() || '').replace(/\r/g, '').replace(/\n{3,}/g, '\n\n').trim();
+  sendTelegramRaw_(header);
+  for (var i = 0; i < body.length; i += 4000) sendTelegramRaw_(body.slice(i, i + 4000));
+  m.getAttachments({ includeInlineImages: true }).forEach(function (a) {
+    if (a.getSize() > 50 * 1024 * 1024) {
+      sendTelegramRaw_('Attachment too large for Telegram (over 50 MB): ' + a.getName() + '. Open it in Gmail.');
+    } else {
+      sendTelegramDocument_(a.copyBlob().setName(a.getName() || 'attachment'));
+    }
+  });
+}
+
+function isForwardAsIs_(address) {
+  return FORWARD_AS_IS.map(function (s) { return s.toLowerCase(); }).indexOf(address) >= 0;
 }
 
 // ---------------- Seen-message store ----------------
@@ -128,17 +161,35 @@ function saveSeen_(ids) {
 // ---------------- Telegram ----------------
 
 function sendTelegram_(text) {
+  sendTelegramRaw_(text.replace(/\*/g, ''));
+}
+
+function sendTelegramRaw_(text) {
+  telegramCall_('sendMessage', {
+    contentType: 'application/json',
+    payload: JSON.stringify({ chat_id: telegramConfig_().chat, text: text || '(empty)', disable_web_page_preview: true }),
+  });
+}
+
+function sendTelegramDocument_(blob) {
+  // A blob in the payload makes UrlFetchApp send multipart/form-data, as Telegram expects.
+  telegramCall_('sendDocument', { payload: { chat_id: telegramConfig_().chat, document: blob } });
+}
+
+function telegramConfig_() {
   var props = PropertiesService.getScriptProperties();
   var token = props.getProperty('TELEGRAM_BOT_TOKEN');
   var chat = props.getProperty('TELEGRAM_CHAT_ID');
   if (!token || !chat) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in Script properties');
+  return { token: token, chat: chat };
+}
+
+function telegramCall_(method, options) {
+  var token = telegramConfig_().token;
   for (var attempt = 0; attempt < 3; attempt++) {
-    var r = UrlFetchApp.fetch('https://api.telegram.org/bot' + token + '/sendMessage', {
-      method: 'post',
-      contentType: 'application/json',
-      payload: JSON.stringify({ chat_id: chat, text: text.replace(/\*/g, ''), disable_web_page_preview: true }),
-      muteHttpExceptions: true,
-    });
+    var params = { method: 'post', payload: options.payload, muteHttpExceptions: true };
+    if (options.contentType) params.contentType = options.contentType;
+    var r = UrlFetchApp.fetch('https://api.telegram.org/bot' + token + '/' + method, params);
     var code = r.getResponseCode();
     if (code < 300) return;
     if (code < 500 && code !== 429) throw new Error('Telegram error ' + code + ': ' + r.getContentText().slice(0, 200));
