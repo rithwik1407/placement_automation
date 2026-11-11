@@ -45,7 +45,7 @@ def process_message(service, message_id: str, *, classifier=None, notifier=None,
         if not verdict.allowed:
             # Only the sender address and reason are stored; the email itself is never read.
             deduplication.finish(message_id, "skipped_sender", sender=verdict.address, error=verdict.reason)
-            return "skipped_sender"
+            return "skipped_auth" if "DKIM" in verdict.reason else "skipped_sender"
 
         email = fetch_message(service, message_id)
         result = classifier(email)

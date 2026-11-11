@@ -1,5 +1,5 @@
 {
-  "_comment": "Only emails from these exact sender addresses are classified or alerted on. Display names are ignored.",
+  "_comment": "Only emails from these exact sender addresses are classified or alerted on. Display names are ignored. require_authentication is off because some placement-cell mails fail Gmail's DKIM/DMARC check (sent through other mail services).",
   "addresses": [
     "kabita_tnp@vnrvjiet.in",
     "poonam_tnp@vnrvjiet.in",
@@ -7,5 +7,5 @@
     "notifications@pod.ai"
   ],
   "domains": [],
-  "require_authentication": true
+  "require_authentication": false
 }

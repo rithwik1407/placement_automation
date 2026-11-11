@@ -25,7 +25,7 @@ var SENDERS = [
 ];
 // Require Gmail's DKIM/DMARC check to pass for the sender's domain (blocks spoofed mail).
 // Senders listed here skip that check (e.g. platforms that send through another mail service).
-var REQUIRE_AUTHENTICATION = true;
+var REQUIRE_AUTHENTICATION = false; // some placement-cell mails fail DKIM/DMARC, so this is off
 var SKIP_AUTH_FOR = [];
 var LOOKBACK_MINUTES = 120; // each run looks at mail from the last 2 hours
 var NOT_MENTIONED = 'Not mentioned in email';
