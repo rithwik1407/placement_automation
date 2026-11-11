@@ -27,8 +27,8 @@ var SENDERS = [
 // Senders listed here skip that check (e.g. platforms that send through another mail service).
 var REQUIRE_AUTHENTICATION = false; // some placement-cell mails fail DKIM/DMARC, so this is off
 var SKIP_AUTH_FOR = [];
-// Emails from these senders are forwarded to Telegram exactly as they are (full text plus every
-// attachment such as PDFs and images), with no placement filtering.
+// Emails from these senders are forwarded to Telegram with no placement filtering: just the
+// sender address, the email text and its attachments (PDFs, images, ...).
 var FORWARD_AS_IS = [
   'vedeshridhvi@gmail.com',
 ];
@@ -124,23 +124,42 @@ function processMessage_(m) {
   return 'alerted';
 }
 
-// Sends the whole email to Telegram: header, full text (split into 4,000-character parts,
-// Telegram's limit), then each attachment as a file. Telegram bots can send files up to 50 MB.
+// Sends only the real content to Telegram: the sender address, the email text (signatures,
+// antivirus footers, tracking links and quoted replies removed), and real attachments as files.
+// Text is split into 4,000-character parts (Telegram's limit); bots can send files up to 50 MB.
 function forwardAsIs_(m) {
-  var header = 'Email from ' + m.getFrom() + '\n' +
-    'Subject: ' + (m.getSubject() || '(no subject)') + '\n' +
-    'Date: ' + Utilities.formatDate(m.getDate(), Session.getScriptTimeZone(), 'd MMM yyyy, h:mm a') + '\n' +
-    'Open in Gmail: https://mail.google.com/mail/u/0/#all/' + m.getId();
-  var body = (m.getPlainBody() || '').replace(/\r/g, '').replace(/\n{3,}/g, '\n\n').trim();
-  sendTelegramRaw_(header);
-  for (var i = 0; i < body.length; i += 4000) sendTelegramRaw_(body.slice(i, i + 4000));
-  m.getAttachments({ includeInlineImages: true }).forEach(function (a) {
+  var from = 'From: ' + extractAddress_(m.getFrom());
+  var body = cleanForwardBody_(m.getPlainBody() || '');
+  var attachments = m.getAttachments({ includeInlineImages: false });
+  if (body) {
+    var text = from + '\n\n' + body;
+    for (var i = 0; i < text.length; i += 4000) sendTelegramRaw_(text.slice(i, i + 4000));
+  }
+  attachments.forEach(function (a, idx) {
+    var caption = body || idx > 0 ? '' : from;
     if (a.getSize() > 50 * 1024 * 1024) {
-      sendTelegramRaw_('Attachment too large for Telegram (over 50 MB): ' + a.getName() + '. Open it in Gmail.');
+      sendTelegramRaw_((caption ? caption + '\n' : '') + 'File too large for Telegram (over 50 MB): ' + a.getName());
     } else {
-      sendTelegramDocument_(a.copyBlob().setName(a.getName() || 'attachment'));
+      sendTelegramDocument_(a.copyBlob().setName(a.getName() || 'attachment'), caption);
     }
   });
+  if (!body && !attachments.length) sendTelegramRaw_(from + '\n\n(empty email)');
+}
+
+function cleanForwardBody_(text) {
+  text = text.replace(/\r/g, '');
+  // Drop quoted replies ("On <date>, <name> wrote:") and anything after a signature delimiter.
+  text = text.split(/\n\s*On [^\n]{0,200}wrote:\s*\n/)[0];
+  text = text.split(/\n-- ?\n/)[0];
+  // Gmail writes links as "text <url>": keep real links, drop antivirus/tracking ones.
+  text = text.replace(/<(https?:\/\/[^>\s]*)>/g, function (_, url) {
+    return /avast\.com|avg\.com|mailtrack|utm_campaign=sig/i.test(url) ? '' : url;
+  });
+  text = text.replace(/<#[^>]*>/g, '');                 // anchor markers
+  text = text.split('\n').filter(function (line) {
+    return !/avast|virus-free|sent from my (iphone|android|phone)|^\s*>/i.test(line);
+  }).join('\n');
+  return text.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 
 function isForwardAsIs_(address) {
@@ -171,9 +190,11 @@ function sendTelegramRaw_(text) {
   });
 }
 
-function sendTelegramDocument_(blob) {
+function sendTelegramDocument_(blob, caption) {
   // A blob in the payload makes UrlFetchApp send multipart/form-data, as Telegram expects.
-  telegramCall_('sendDocument', { payload: { chat_id: telegramConfig_().chat, document: blob } });
+  var payload = { chat_id: telegramConfig_().chat, document: blob };
+  if (caption) payload.caption = caption;
+  telegramCall_('sendDocument', { payload: payload });
 }
 
 function telegramConfig_() {
